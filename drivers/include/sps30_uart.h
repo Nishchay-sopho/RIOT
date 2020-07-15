@@ -18,7 +18,8 @@ typedef struct {
 typedef struct {
 	mutex_t dev_lock;
 	mutex_t cb_lock;
-	uint8_t last_cmd;
+	bool copy_to_buf;
+	uint8_t state;
 	uint8_t rcv_buf[SPS30_UART_MAX_BUF_LEN];
 	uint8_t pos;
 	sps30_uart_params_t params;
@@ -44,10 +45,35 @@ typedef enum {
     SPS30_UART_ERROR   /**< Some UART operation failed */
 } sps30_uart_error_code_t;
 
-int sps30_uart_init(sps30_uart_t *dev, sps30_uart_params_t *params);
+int sps30_uart_init(sps30_uart_t *dev, const sps30_uart_params_t *params);
+
 int sps30_uart_send_cmd(sps30_uart_t *dev, uint8_t cmd);
+
 int sps30_uart_start_measurement(sps30_uart_t *dev);
+
+int sps30_uart_stop_measurement(sps30_uart_t *dev);
+
 int sps30_uart_read_measurement(sps30_uart_t *dev);
+
+int sps30_uart_read_ac_interval(sps30_uart_t *dev, uint32_t *seconds);
+
+int sps30_uart_write_ac_interval(sps30_uart_t *dev, uint32_t seconds);
+
+int sps30_uart_start_fan_clean(sps30_uart_t *dev);
+
+int sps30_uart_read_product_type(sps30_uart_t *dev, char *str, size_t len);
+
+int sps30_uart_read_serial_number(sps30_uart_t *dev, char *str, size_t len);
+
+int sps30_uart_read_version(sps30_uart_t *dev, char *str, size_t len);
+
+int sps30_uart_read_status_reg(sps30_uart_t *dev, bool clear_reg);
+
+int sps30_uart_reset(sps30_uart_t *dev);
+
+int sps30_uart_sleep(sps30_uart_t *dev);
+
+int sps30_uart_wake(sps30_uart_t *dev);
 
 #ifdef __cplusplus
 }

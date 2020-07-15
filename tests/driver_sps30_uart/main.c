@@ -13,7 +13,8 @@ int main(void)
 	int ret = -1;
 	xtimer_sleep(3);
 	printf("[test_sps30_uart] Initiating device\n");
-	sps30_uart_init(&sps30_dev, &sps30_params);
+	ret = sps30_uart_init(&sps30_dev, &sps30_params);
+	printf("Output of init %d.\n", ret);
 
 	ret = sps30_uart_start_measurement(&sps30_dev);
 	printf("Output of measurement start %d\n", ret);
