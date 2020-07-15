@@ -35,6 +35,8 @@ static bool _check_copy_from_rcv_buf (uint8_t *data);
 static uint8_t _insert_checksum (uint8_t *data, size_t len);
 static int _is_valid_checksum (uint8_t *data, size_t len);
 
+gpio_t test_pin = GPIO_PIN(PORT_B, 2);
+
 int sps30_uart_init(sps30_uart_t *dev, const sps30_uart_params_t *params)
 {
 	dev->params = *params;
@@ -42,11 +44,15 @@ int sps30_uart_init(sps30_uart_t *dev, const sps30_uart_params_t *params)
 	mutex_init(&dev->dev_lock);
 	mutex_init(&dev->cb_lock);
 
+	gpio_init(test_pin, GPIO_OUT);
+	gpio_set(test_pin);
 	int ret = uart_init(SPS30_UART_DEV, SPS30_UART_BAUD_RATE, _receive_callback, dev);
 
 	/* Just for testing purposes rightnow, needs to be replaced with soft reset once everything starts working */
 	ret = sps30_uart_reset(dev);
+	dev->state = IDLE_MODE;
 	DEBUG("[sps30_uart_init] Init done.\n");
+
 	return ret;
 }
 
@@ -75,6 +81,9 @@ int sps30_uart_start_measurement(sps30_uart_t *dev)
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
+	else {
+		dev->state = MEASUREMENT_MODE;
+	}
 	// mutex_lock(&dev->cb_lock);
 	ret = _rcv_cmd(dev, NULL, NULL);
 	return ret;
@@ -90,6 +99,9 @@ int sps30_uart_stop_measurement(sps30_uart_t *dev)
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
+	else {
+		dev->state = IDLE_MODE;
+	}
 
 	ret = _rcv_cmd(dev, NULL, NULL);
 	return ret;
@@ -97,6 +109,10 @@ int sps30_uart_stop_measurement(sps30_uart_t *dev)
 
 int sps30_uart_read_measurement(sps30_uart_t *dev)
 {
+	if (dev->state != MEASUREMENT_MODE) {
+		DEBUG("[sps30_uart] Not allowed in this mode\n");
+		return SPS30_UART_NOT_ALLOWED_IN_MODE;
+	}
 	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_READ, 0, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
 	_insert_checksum(send_cmd, sizeof(send_cmd));
@@ -154,6 +170,10 @@ int sps30_uart_write_ac_interval(sps30_uart_t *dev, uint32_t seconds)
 
 int sps30_uart_start_fan_clean(sps30_uart_t *dev)
 {
+	if(dev->state != MEASUREMENT_MODE) {
+		DEBUG("[sps30_uart] Not allowed in this mode\n");
+		return SPS30_UART_NOT_ALLOWED_IN_MODE;
+	}
 	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_CLEAN_FAN, 0, 0, SPS30_UART_FRAME_TAIL};
 	_insert_checksum(send_cmd, sizeof(send_cmd));
 
@@ -272,7 +292,7 @@ int sps30_uart_sleep(sps30_uart_t *dev)
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
-
+	dev->state = SLEEP_MODE;
 	ret = _rcv_cmd(dev, NULL, NULL);
 	return ret;
 }
@@ -287,7 +307,7 @@ int sps30_uart_wake(sps30_uart_t *dev)
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
-
+	dev->state = IDLE_MODE;
 	ret = _rcv_cmd(dev, NULL, NULL);
 	return ret;
 }
@@ -302,6 +322,8 @@ static void _receive_callback(void *arg, uint8_t data)
 		dev->pos == SPS30_UART_MAX_BUF_LEN) {
 		return ;
 	}
+
+	/* Remove byte stuffing from received data */
 	if (data == 0x5E && dev->rcv_buf[dev->pos-1] == 0x7D) {
 		dev->pos--;
 		dev->rcv_buf[dev->pos] = 0x7E;
@@ -333,6 +355,7 @@ static void _receive_callback(void *arg, uint8_t data)
 
 static int _send_cmd (sps30_uart_t *dev, uint8_t *send_buf, size_t send_len)
 {
+	// gpio_toggle(test_pin);
 	_preprocess_send_buf(send_buf, send_len);
 	// DEBUG("[sps30_uart_snd_cmd] _send_cmd\n");
 	mutex_lock(&dev->dev_lock);
@@ -350,11 +373,14 @@ static int _send_cmd (sps30_uart_t *dev, uint8_t *send_buf, size_t send_len)
 		uint8_t wake_if[] = {0xFF}; 
 		uart_write(SPS30_UART_DEV, wake_if, sizeof(wake_if));	
 	}
+	gpio_toggle(test_pin);
 	uart_write(SPS30_UART_DEV, send_buf, send_len);
-	// xtimer_usleep(2000);
-	DEBUG("[sps30_uart_snd_rcv_cmd] uart write complete.\n");
+	// xtimer_usleep(4000);
+	// DEBUG("[sps30_uart_snd_rcv_cmd] uart write complete.\n");
 	/* Obtaining lock to indicate receiving data complete in response to sent command */
+	// gpio_toggle(test_pin);
 	mutex_lock(&dev->cb_lock);
+	gpio_toggle(test_pin);
 	// DEBUG("[sps30_uart_snd_rcv_cmd] cb_lock obtained after write.\n");
 	return SPS30_OK;
 }
@@ -382,6 +408,7 @@ static int _rcv_cmd (sps30_uart_t *dev, uint8_t *recv_buf, size_t *recv_len)
 	}
 
 	mutex_unlock(&dev->dev_lock);
+	xtimer_usleep(5000);
 
 	return SPS30_OK;
 }

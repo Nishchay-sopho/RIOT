@@ -18,7 +18,6 @@ typedef struct {
 typedef struct {
 	mutex_t dev_lock;
 	mutex_t cb_lock;
-	bool copy_to_buf;
 	uint8_t state;
 	uint8_t rcv_buf[SPS30_UART_MAX_BUF_LEN];
 	uint8_t pos;
@@ -42,7 +41,8 @@ typedef enum {
     SPS30_OK = 0,      /**< Everything went fine */
     SPS30_CRC_ERROR,   /**< The CRC check of received data failed */
     SPS30_NO_NEW_DATA, /**< No new data measurements found */
-    SPS30_UART_ERROR   /**< Some UART operation failed */
+    SPS30_UART_ERROR,   /**< Some UART operation failed */
+    SPS30_UART_NOT_ALLOWED_IN_MODE
 } sps30_uart_error_code_t;
 
 int sps30_uart_init(sps30_uart_t *dev, const sps30_uart_params_t *params);

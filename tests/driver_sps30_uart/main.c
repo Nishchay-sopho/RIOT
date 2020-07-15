@@ -16,13 +16,29 @@ int main(void)
 	ret = sps30_uart_init(&sps30_dev, &sps30_params);
 	printf("Output of init %d.\n", ret);
 
+	ret = sps30_uart_read_ac_interval(&sps30_dev, NULL);
+	printf("Output of read auto clean interval%d\n", ret);
+
 	ret = sps30_uart_start_measurement(&sps30_dev);
 	printf("Output of measurement start %d\n", ret);
 
-	ret = sps30_uart_send_cmd(&sps30_dev, SPS30_UART_CLEAN_FAN);
+	ret = sps30_uart_start_fan_clean(&sps30_dev);
 	printf("Output of start fan cleaning%d\n", ret);
 
-	printf("[test_sps30_uart] Completed\n");
+	xtimer_sleep(1);
+	
+	// ret = sps30_uart_stop_measurement(&sps30_dev);
+
+	// xtimer_sleep(1);
+
+	// ret = sps30_uart_start_measurement(&sps30_dev);
+
+	// ret = sps30_uart_start_fan_clean(&sps30_dev);
+	// printf("Output of start fan cleaning%d\n", ret);
+
+	// ret = sps30_uart_stop_measurement(&sps30_dev);
+
+	// printf("[test_sps30_uart] Completed\n");
 	return 0;
 }
 
