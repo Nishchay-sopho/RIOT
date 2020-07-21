@@ -11,13 +11,15 @@ int main(void)
 {
 	printf("SPS30 UART test\n");
 	int ret = -1;
+	uint32_t auto_clean_interval = 0;
 	xtimer_sleep(3);
+
 	printf("[test_sps30_uart] Initiating device\n");
 	ret = sps30_uart_init(&sps30_dev, &sps30_params);
 	printf("Output of init %d.\n", ret);
 
-	ret = sps30_uart_read_ac_interval(&sps30_dev, NULL);
-	printf("Output of read auto clean interval%d\n", ret);
+	ret = sps30_uart_read_ac_interval(&sps30_dev, &auto_clean_interval);
+	printf("Output of read auto clean interval%d, received ac_interval: %lu\n", ret, auto_clean_interval);
 
 	ret = sps30_uart_start_measurement(&sps30_dev);
 	printf("Output of measurement start %d\n", ret);

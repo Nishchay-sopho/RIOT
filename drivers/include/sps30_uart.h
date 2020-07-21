@@ -53,7 +53,7 @@ int sps30_uart_start_measurement(sps30_uart_t *dev);
 
 int sps30_uart_stop_measurement(sps30_uart_t *dev);
 
-int sps30_uart_read_measurement(sps30_uart_t *dev);
+int sps30_uart_read_measurement(sps30_uart_t *dev, sps30_uart_data_t *result);
 
 int sps30_uart_read_ac_interval(sps30_uart_t *dev, uint32_t *seconds);
 

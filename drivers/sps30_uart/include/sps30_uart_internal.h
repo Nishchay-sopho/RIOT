@@ -10,6 +10,10 @@ extern "C" {
    like once you receive 0x7D and 0x5E, replace it with 0x7E
   */
 #define SPS30_UART_MAX_BUF_LEN			(0x22)
+#define SPS30_UART_MAX_CMD_LEN			(0x12)
+
+#define SPS30_UART_RCV_STATE_IDX		(0x03)
+#define SPS30_UART_RCV_DATA_IDX			(0x05)
 
 #define SPS30_UART_FRAME_HEAD			(0x7E)
 #define SPS30_UART_FRAME_TAIL			(0x7E)

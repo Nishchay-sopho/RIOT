@@ -17,6 +17,7 @@
 
 #include "xtimer.h"
 #include "od.h"
+#include "byteorder.h"
 
 #include "sps30_uart.h"
 
@@ -25,14 +26,17 @@
 
 #define SPS30_UART_DEV			(dev->params.uart_dev)
 #define SPS30_UART_BAUD_RATE	(dev->params.baud_rate)
-#define SPS30_UART_ADDRESS		(dev->params.uart_addr)	
+#define SPS30_UART_ADDRESS		(dev->params.uart_addr)
+
+#define SPS30_UART_CMD_SIZE		(6 + send_cmd[3])
 
 static void _receive_callback(void *arg, uint8_t data);
 static int _send_cmd (sps30_uart_t *dev, uint8_t *send_buf, size_t send_len);
 static int _rcv_cmd	(sps30_uart_t *dev, uint8_t *recv_buf, size_t *recv_len);
-static int _preprocess_send_buf (uint8_t *buf, size_t len);
-static bool _check_copy_from_rcv_buf (uint8_t *data);
+static size_t _preprocess_send_buf (uint8_t *buf, int len);
+// static bool _check_copy_from_rcv_buf (uint8_t *data);
 static uint8_t _insert_checksum (uint8_t *data, size_t len);
+static bool _requires_byte_stuffing (uint8_t data);
 static int _is_valid_checksum (uint8_t *data, size_t len);
 
 gpio_t test_pin = GPIO_PIN(PORT_B, 2);
@@ -48,7 +52,6 @@ int sps30_uart_init(sps30_uart_t *dev, const sps30_uart_params_t *params)
 	gpio_set(test_pin);
 	int ret = uart_init(SPS30_UART_DEV, SPS30_UART_BAUD_RATE, _receive_callback, dev);
 
-	/* Just for testing purposes rightnow, needs to be replaced with soft reset once everything starts working */
 	ret = sps30_uart_reset(dev);
 	dev->state = IDLE_MODE;
 	DEBUG("[sps30_uart_init] Init done.\n");
@@ -59,6 +62,8 @@ int sps30_uart_init(sps30_uart_t *dev, const sps30_uart_params_t *params)
 int sps30_uart_send_cmd(sps30_uart_t *dev, uint8_t cmd)
 {
 	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, cmd, 0, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
+
 	_insert_checksum(send_cmd, sizeof(send_cmd));
 
 	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
@@ -66,58 +71,75 @@ int sps30_uart_send_cmd(sps30_uart_t *dev, uint8_t cmd)
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
-	// mutex_lock(&dev->cb_lock);
-	ret = _rcv_cmd(dev, NULL, NULL);
+
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	return ret;
 }
 
 int sps30_uart_start_measurement(sps30_uart_t *dev)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_START, 2, SPS30_UART_SUBCOMMAND_MEASURE, SPS30_UART_MEASURE_FLOAT, 0, SPS30_UART_FRAME_TAIL};
-	_insert_checksum(send_cmd, sizeof(send_cmd));
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_START, 2, SPS30_UART_SUBCOMMAND_MEASURE, SPS30_UART_MEASURE_FLOAT, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
-	else {
-		dev->state = MEASUREMENT_MODE;
+	dev->state = MEASUREMENT_MODE;
+
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
 	}
-	// mutex_lock(&dev->cb_lock);
-	ret = _rcv_cmd(dev, NULL, NULL);
 	return ret;
 }
 
 int sps30_uart_stop_measurement(sps30_uart_t *dev)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_STOP, 0, 0, SPS30_UART_FRAME_TAIL};
-	_insert_checksum(send_cmd, sizeof(send_cmd));
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_STOP, 0, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
-	else {
-		dev->state = IDLE_MODE;
-	}
+	dev->state = IDLE_MODE;
 
-	ret = _rcv_cmd(dev, NULL, NULL);
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	return ret;
 }
 
-int sps30_uart_read_measurement(sps30_uart_t *dev)
+int sps30_uart_read_measurement(sps30_uart_t *dev, sps30_uart_data_t *result)
 {
+	(void) result;
 	if (dev->state != MEASUREMENT_MODE) {
 		DEBUG("[sps30_uart] Not allowed in this mode\n");
 		return SPS30_UART_NOT_ALLOWED_IN_MODE;
 	}
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_READ, 0, 0, SPS30_UART_FRAME_TAIL};
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_READ, 0, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -125,19 +147,23 @@ int sps30_uart_read_measurement(sps30_uart_t *dev)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
-	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
-	return SPS30_OK;
-	return 0;
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
+
+	/* Extract measurements and store in result struct */
+	return ret;
 }
 
 int sps30_uart_read_ac_interval(sps30_uart_t *dev, uint32_t *seconds)
 {
-	(void) seconds;
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_AUTO_CLEAN_FUNC, 1, SPS30_UART_SUBCOMMAND_AUTOCLEAN, 0, SPS30_UART_FRAME_TAIL};
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_AUTO_CLEAN_FUNC, 1, SPS30_UART_SUBCOMMAND_AUTOCLEAN, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -145,18 +171,25 @@ int sps30_uart_read_ac_interval(sps30_uart_t *dev, uint32_t *seconds)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
-	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
-	return SPS30_OK;
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
+
+	*seconds = byteorder_bebuftohl(recv_buf+SPS30_UART_RCV_DATA_IDX);
+
+	return ret;
 }
 
 int sps30_uart_write_ac_interval(sps30_uart_t *dev, uint32_t seconds)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_AUTO_CLEAN_FUNC, 5, 0x00, (seconds << 24 | 0x00), (seconds << 16 | 0x00),
+	//use ntohl() to send seconds instead of doing bits opeartions
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_AUTO_CLEAN_FUNC, 5, SPS30_UART_SUBCOMMAND_AUTOCLEAN, (seconds << 24 | 0x00), (seconds << 16 | 0x00),
 							(seconds << 8 | 0x00), (seconds | 0x00), 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -164,8 +197,11 @@ int sps30_uart_write_ac_interval(sps30_uart_t *dev, uint32_t seconds)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
-	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
-	return SPS30_OK;
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
+	return ret;
 }
 
 int sps30_uart_start_fan_clean(sps30_uart_t *dev)
@@ -174,28 +210,12 @@ int sps30_uart_start_fan_clean(sps30_uart_t *dev)
 		DEBUG("[sps30_uart] Not allowed in this mode\n");
 		return SPS30_UART_NOT_ALLOWED_IN_MODE;
 	}
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_CLEAN_FAN, 0, 0, SPS30_UART_FRAME_TAIL};
-	_insert_checksum(send_cmd, sizeof(send_cmd));
-
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
-	if (ret != SPS30_OK) {
-		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
-		return ret;
-	}
-
-	ret = _rcv_cmd(dev, NULL, NULL);
-	return ret;
-}
-
-int sps30_uart_read_product_type(sps30_uart_t *dev, char *str, size_t len)
-{
-	(void) str;
-	(void) len;
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_DEV_INFO, 1, SPS30_UART_DEV_INFO_PRODUCT, 0, SPS30_UART_FRAME_TAIL};
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_CLEAN_FAN, 0, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -203,6 +223,34 @@ int sps30_uart_read_product_type(sps30_uart_t *dev, char *str, size_t len)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
+	return ret;
+}
+
+int sps30_uart_read_product_type(sps30_uart_t *dev, char *str, size_t len)
+{
+	(void) str;
+	(void) len;
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_DEV_INFO, 1, SPS30_UART_DEV_INFO_PRODUCT, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
+
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
+	if (ret != SPS30_OK) {
+		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
+		return ret;
+	}
+
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
 	return SPS30_OK;
 }
@@ -211,11 +259,12 @@ int sps30_uart_read_serial_number(sps30_uart_t *dev, char *str, size_t len)
 {
 	(void ) str;
 	(void ) len;
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_DEV_INFO, 1, SPS30_UART_DEV_INFO_SERIAL, 0, SPS30_UART_FRAME_TAIL};
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_DEV_INFO, 1, SPS30_UART_DEV_INFO_SERIAL, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -223,6 +272,10 @@ int sps30_uart_read_serial_number(sps30_uart_t *dev, char *str, size_t len)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	
 	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
 	return SPS30_OK;
@@ -231,12 +284,13 @@ int sps30_uart_read_serial_number(sps30_uart_t *dev, char *str, size_t len)
 int sps30_uart_read_version(sps30_uart_t *dev, char *str, size_t len)
 {
 	(void) str;
-	(void) len;
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_READ_VERSION, 0, 0, SPS30_UART_FRAME_TAIL};
+	(void) len;	
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_READ_VERSION, 0, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -244,6 +298,10 @@ int sps30_uart_read_version(sps30_uart_t *dev, char *str, size_t len)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	
 	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
 	return SPS30_OK;
@@ -251,11 +309,12 @@ int sps30_uart_read_version(sps30_uart_t *dev, char *str, size_t len)
 
 int sps30_uart_read_status_reg(sps30_uart_t *dev, bool clear_reg)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_STATUS_REG, 1, clear_reg?1:0, 0, SPS30_UART_FRAME_TAIL};
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_STATUS_REG, 1, clear_reg?1:0, 0, SPS30_UART_FRAME_TAIL};
 	size_t recv_len = 0;
-	_insert_checksum(send_cmd, sizeof(send_cmd));
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
@@ -263,56 +322,83 @@ int sps30_uart_read_status_reg(sps30_uart_t *dev, bool clear_reg)
 
 	uint8_t recv_buf[dev->pos];
 	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	od_hex_dump(recv_buf, recv_len, OD_WIDTH_DEFAULT);
 	return SPS30_OK;
 }
 
 int sps30_uart_reset(sps30_uart_t *dev)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_RESET, 0, 0, SPS30_UART_FRAME_TAIL};
-	_insert_checksum(send_cmd, sizeof(send_cmd));
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_RESET, 0, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
-	// mutex_lock(&dev->cb_lock);
-	ret = _rcv_cmd(dev, NULL, NULL);
+
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	return ret;
 }
 
 int sps30_uart_sleep(sps30_uart_t *dev)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_SLEEP, 0, 0, SPS30_UART_FRAME_TAIL};
-	_insert_checksum(send_cmd, sizeof(send_cmd));
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_SLEEP, 0, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
 	dev->state = SLEEP_MODE;
-	ret = _rcv_cmd(dev, NULL, NULL);
+
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	return ret;
 }
 
 int sps30_uart_wake(sps30_uart_t *dev)
 {
-	uint8_t send_cmd[] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_WAKE, 0, 0, SPS30_UART_FRAME_TAIL};
-	_insert_checksum(send_cmd, sizeof(send_cmd));
+	uint8_t send_cmd[SPS30_UART_MAX_CMD_LEN] = {SPS30_UART_FRAME_HEAD, SPS30_UART_ADDRESS, SPS30_UART_WAKE, 0, 0, SPS30_UART_FRAME_TAIL};
+	size_t recv_len = 0;
 
-	int ret = _send_cmd(dev, send_cmd, sizeof(send_cmd));
+	_insert_checksum(send_cmd, SPS30_UART_CMD_SIZE);
+
+	int ret = _send_cmd(dev, send_cmd, SPS30_UART_CMD_SIZE);
 	if (ret != SPS30_OK) {
 		DEBUG("[sps30_uart] send wake command failed with error %d\n", ret);
 		return ret;
 	}
 	dev->state = IDLE_MODE;
-	ret = _rcv_cmd(dev, NULL, NULL);
+
+	uint8_t recv_buf[dev->pos];
+	ret = _rcv_cmd(dev, recv_buf, &recv_len);
+	if (recv_buf[SPS30_UART_RCV_STATE_IDX] != 0x00) {
+		DEBUG("[sps30_uart] Received error from sensor, %02x\n", recv_buf[SPS30_UART_RCV_STATE_IDX]);
+		return SPS30_UART_ERROR;
+	}
 	return ret;
 }
 
-/* Resolve byte stuffing here only */
+/* Took care of byte stuffing in incoming bytes here only */
 static void _receive_callback(void *arg, uint8_t data)
 {
 	sps30_uart_t *dev = (sps30_uart_t *)arg;
@@ -356,8 +442,7 @@ static void _receive_callback(void *arg, uint8_t data)
 static int _send_cmd (sps30_uart_t *dev, uint8_t *send_buf, size_t send_len)
 {
 	// gpio_toggle(test_pin);
-	_preprocess_send_buf(send_buf, send_len);
-	// DEBUG("[sps30_uart_snd_cmd] _send_cmd\n");
+	size_t stuffed_size = _preprocess_send_buf(send_buf, send_len);
 	mutex_lock(&dev->dev_lock);
 	// DEBUG("[sps30_uart_snd_rcv_cmd] dev_lock obtained.\n");
 	dev->pos = 0;
@@ -374,7 +459,7 @@ static int _send_cmd (sps30_uart_t *dev, uint8_t *send_buf, size_t send_len)
 		uart_write(SPS30_UART_DEV, wake_if, sizeof(wake_if));	
 	}
 	gpio_toggle(test_pin);
-	uart_write(SPS30_UART_DEV, send_buf, send_len);
+	uart_write(SPS30_UART_DEV, send_buf, stuffed_size);
 	// xtimer_usleep(4000);
 	// DEBUG("[sps30_uart_snd_rcv_cmd] uart write complete.\n");
 	/* Obtaining lock to indicate receiving data complete in response to sent command */
@@ -388,7 +473,7 @@ static int _send_cmd (sps30_uart_t *dev, uint8_t *send_buf, size_t send_len)
 /* Separate function to allocate only those many bytes as required for the data received */
 static int _rcv_cmd (sps30_uart_t *dev, uint8_t *recv_buf, size_t *recv_len)
 {
-	DEBUG("[sps30_uart_rcv_cmd] start\n");
+	// DEBUG("[sps30_uart_rcv_cmd] start\n");
 	if (dev->pos != 0) {
 		if (_is_valid_checksum(dev->rcv_buf, dev->pos) == SPS30_CRC_ERROR) {
 			DEBUG("[sps30_uart_rcv_cmd] checksum error\n");
@@ -397,8 +482,8 @@ static int _rcv_cmd (sps30_uart_t *dev, uint8_t *recv_buf, size_t *recv_len)
 			mutex_unlock(&dev->dev_lock);
 			return SPS30_CRC_ERROR;
 		}
-		DEBUG("[sps30_uart_rcv_cmd] Received data of length %d\n", dev->pos);
-		if (_check_copy_from_rcv_buf(dev->rcv_buf) && recv_buf != NULL) {
+		// DEBUG("[sps30_uart_rcv_cmd] Received data of length %d\n", dev->pos);
+		if (recv_buf != NULL) {
 			/* Think about just copying the data part since all other parts are anyways irrelevant to us */
 			memcpy(recv_buf, dev->rcv_buf, dev->pos);
 			*recv_len = dev->pos;
@@ -408,39 +493,87 @@ static int _rcv_cmd (sps30_uart_t *dev, uint8_t *recv_buf, size_t *recv_len)
 	}
 
 	mutex_unlock(&dev->dev_lock);
-	xtimer_usleep(5000);
+	/* Wait 10ms before next command can be sent */
+	xtimer_usleep(10000);
 
 	return SPS30_OK;
 }
 
-static int _preprocess_send_buf (uint8_t *buf, size_t len)
+/* 
+ *	Handles Byte-stuffing before sending command to sensor
+ *
+ *	Returns final length of array after byte stuffing
+ *
+ *	Note: Assumes that the buf is big enough to handle extra bytes of byte stuffing.
+ * 	For now, this is handled by declaring the array of MAX_LEN
+ */
+static size_t _preprocess_send_buf(uint8_t *buf, int len)
 {
-	(void) buf;
-	(void) len;
-	return 0;
-}
+	int num_byte_stuffs = 0, temp = 0;
 
-/* Checks if the data received needs to be copied to the receive buffer */
-static bool _check_copy_from_rcv_buf (uint8_t *data)
-{
-	switch(data[2]) {
-		case SPS30_UART_START:
- 		case SPS30_UART_STOP:
- 		case SPS30_UART_SLEEP:
- 		case SPS30_UART_WAKE:
- 		case SPS30_UART_CLEAN_FAN:
- 		case SPS30_UART_RESET:
- 			return false;	
- 		case SPS30_UART_READ:
- 		case SPS30_UART_AUTO_CLEAN_FUNC:
- 		case SPS30_UART_DEV_INFO:
- 		case SPS30_UART_READ_VERSION:
- 		case SPS30_UART_STATUS_REG:
- 			return true;
+	/* Calculate number of byte stuffings required */
+	for (int i = 1; i < len-1; i++) {
+		if (_requires_byte_stuffing(buf[i])) {
+			num_byte_stuffs++;
+		}
 	}
-	return true;
+	temp = num_byte_stuffs;
+	buf[len-1+num_byte_stuffs] = buf[len-1];
+
+	/* Move all elements ahead in one pass */
+	for (int i = len-2; i >= 1; i--) {
+		switch(buf[i]) {
+			case 0x7E:
+				temp--;
+				buf[i+temp] = 0x7D;
+				buf[i+temp+1] = 0x5E;
+				break;
+			case 0x7D:
+				temp--;
+				buf[i+temp] = 0x7D;
+				buf[i+temp+1] = 0x5D;
+				break;
+			case 0x11:
+				temp--;
+				buf[i+temp] = 0x7D;
+				buf[i+temp+1] = 0x31;
+				break;
+			case 0x13:
+				temp--;
+				buf[i+temp] = 0x7D;
+				buf[i+temp+1] = 0x33;
+				break;
+			default:
+				buf[i+temp] = buf[i];
+				break;
+		}
+	}
+
+	return (num_byte_stuffs+len);
 }
 
+// /* Checks if the data received needs to be copied to the receive buffer */
+// static bool _check_copy_from_rcv_buf (uint8_t *data)
+// {
+// 	switch(data[2]) {
+// 		case SPS30_UART_START:
+//  		case SPS30_UART_STOP:
+//  		case SPS30_UART_SLEEP:
+//  		case SPS30_UART_WAKE:
+//  		case SPS30_UART_CLEAN_FAN:
+//  		case SPS30_UART_RESET:
+//  			return false;	
+//  		case SPS30_UART_READ:
+//  		case SPS30_UART_AUTO_CLEAN_FUNC:
+//  		case SPS30_UART_DEV_INFO:
+//  		case SPS30_UART_READ_VERSION:
+//  		case SPS30_UART_STATUS_REG:
+//  			return true;
+// 	}
+// 	return true;
+// }
+
+/* Return true if byte stuffing was required */
 static uint8_t _insert_checksum (uint8_t *data, size_t len)
 {
 	uint8_t checksum = data[len-2];
@@ -449,6 +582,11 @@ static uint8_t _insert_checksum (uint8_t *data, size_t len)
 	}
 	data[len-2] = ~checksum;
 	return 0;
+}
+
+static bool _requires_byte_stuffing (uint8_t data)
+{
+	return (data == 0x7E || data == 0x7D || data == 0x11 || data == 0x13)?true:false;
 }
 
 static int _is_valid_checksum (uint8_t *data, size_t len)
