@@ -59,15 +59,15 @@ int sps30_uart_read_ac_interval(sps30_uart_t *dev, uint32_t *seconds);
 
 int sps30_uart_write_ac_interval(sps30_uart_t *dev, uint32_t seconds);
 
-int sps30_uart_start_fan_clean(sps30_uart_t *dev);
+int sps30_uart_clean_fan(sps30_uart_t *dev);
 
-int sps30_uart_read_product_type(sps30_uart_t *dev, char *str, size_t len);
+int sps30_uart_read_product_type(sps30_uart_t *dev, char *str, size_t *len);
 
-int sps30_uart_read_serial_number(sps30_uart_t *dev, char *str, size_t len);
+int sps30_uart_read_serial_number(sps30_uart_t *dev, char *str, size_t *len);
 
-int sps30_uart_read_version(sps30_uart_t *dev, char *str, size_t len);
+int sps30_uart_read_version(sps30_uart_t *dev, char *str, size_t *len);
 
-int sps30_uart_read_status_reg(sps30_uart_t *dev, bool clear_reg);
+int sps30_uart_read_status_reg(sps30_uart_t *dev, bool clear_reg, uint32_t *status_register);
 
 int sps30_uart_reset(sps30_uart_t *dev);
 
