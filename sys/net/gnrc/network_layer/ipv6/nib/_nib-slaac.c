@@ -23,7 +23,7 @@
 #include "_nib-6ln.h"
 #include "_nib-arsm.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
 
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN) || IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_SLAAC)
@@ -84,6 +84,7 @@ void _auto_configure_addr(gnrc_netif_t *netif, const ipv6_addr_t *pfx,
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN)
     if (new_address && gnrc_netif_is_6ln(netif) &&
         !gnrc_netif_is_6lbr(netif)) {
+        DEBUG("_nib-slaac: Auto configure in slaac, and re-registering address\n");
         _handle_rereg_address(&netif->ipv6.addrs[idx]);
     }
 #else   /* CONFIG_GNRC_IPV6_NIB_6LN */
@@ -184,6 +185,7 @@ static int _get_netif_state(gnrc_netif_t **netif, const ipv6_addr_t *addr)
 
 void _handle_dad(const ipv6_addr_t *addr)
 {
+    DEBUG("_nib-slaac: ipv6 addr in _handle_dad=|%s|\n", ipv6_addr_to_str(addr_str, addr, sizeof(addr_str)));
     ipv6_addr_t sol_nodes;
     gnrc_netif_t *netif = NULL;
     int idx = _get_netif_state(&netif, addr);

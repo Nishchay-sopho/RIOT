@@ -25,7 +25,7 @@
 
 #include "net/gnrc/ndp.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
 
 /* For PRIu8 etc. */

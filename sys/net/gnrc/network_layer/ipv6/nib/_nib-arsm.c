@@ -26,7 +26,7 @@
 #include "_nib-router.h"
 #include "_nib-6lr.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
 
 static char addr_str[IPV6_ADDR_MAX_STR_LEN];
@@ -39,7 +39,7 @@ void _snd_ns(const ipv6_addr_t *tgt, gnrc_netif_t *netif,
 #ifdef MODULE_GNRC_SIXLOWPAN_ND
     assert(netif != NULL);
     _nib_dr_entry_t *dr = _nib_drl_get(NULL, netif->pid);
-
+    DEBUG("_nib-arsm: Inside _snd_ns()");
     /* add ARO based on interface */
     if ((src != NULL) && gnrc_netif_is_6ln(netif) &&
         (_nib_onl_get_if(dr->next_hop) == (unsigned)netif->pid) &&

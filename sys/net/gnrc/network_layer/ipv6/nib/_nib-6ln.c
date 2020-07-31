@@ -13,6 +13,7 @@
  * @author  Martine Lenders <m.lenders@fu-berlin.de>
  */
 #include <kernel_defines.h>
+#include <stdio.h>
 
 #include "net/gnrc/netif/internal.h"
 #include "net/gnrc/ipv6/nib.h"
@@ -21,7 +22,7 @@
 #include "_nib-6ln.h"
 #include "_nib-6lr.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
 
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN)
@@ -43,6 +44,7 @@ bool _resolve_addr_from_ipv6(const ipv6_addr_t *dst, gnrc_netif_t *netif,
 {
     bool res = (netif != NULL) && gnrc_netif_is_6ln(netif) &&
                ipv6_addr_is_link_local(dst);
+    DEBUG("_nib-6ln: res: %d, netif_null: %d, gnrc_netif_is_6ln: %d, local_link: %d\n", res, netif!=NULL, gnrc_netif_is_6ln(netif), ipv6_addr_is_link_local(dst));
 
     if (res) {
         uint8_t l2addr_len;
@@ -136,6 +138,7 @@ uint8_t _handle_aro(gnrc_netif_t *netif, const ipv6_hdr_t *ipv6,
                         }
                         else {
                             assert(dr->next_hop != NULL);
+                            DEBUG("_nib-6ln: Re-registering in nib-6ln\n");
                             _handle_rereg_address(&ipv6->dst);
                         }
                     }

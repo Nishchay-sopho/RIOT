@@ -39,7 +39,7 @@
 #include "_nib-6lr.h"
 #include "_nib-slaac.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
 #if ENABLE_DEBUG
 #include "evtimer.h"
@@ -128,6 +128,7 @@ void gnrc_ipv6_nib_init_iface(gnrc_netif_t *netif)
 
     _init_iface_arsm(netif);
     netif->ipv6.retrans_time = NDP_RETRANS_TIMER_MS;
+    DEBUG("CONFIG_GNRC_IPV6_NIB_6LN: %d, CONFIG_GNRC_IPV6_NIB_SLAAC: %d\n", CONFIG_GNRC_IPV6_NIB_6LN, CONFIG_GNRC_IPV6_NIB_SLAAC);
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_SLAAC) || IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN)
     /* TODO: set differently dependent on CONFIG_GNRC_IPV6_NIB_SLAAC if
      * alternatives exist */
@@ -150,6 +151,7 @@ void gnrc_ipv6_nib_init_iface(gnrc_netif_t *netif)
     _auto_configure_addr(netif, &ipv6_addr_link_local_prefix, 64U);
     if (!(gnrc_netif_is_rtr_adv(netif)) ||
         (gnrc_netif_is_6ln(netif) && !gnrc_netif_is_6lbr(netif))) {
+        DEBUG("nib: Setting GNRC_IPV6_NIB_SEARCH_RTR event timer\n");
         uint32_t next_rs_time = random_uint32_range(0, NDP_MAX_RS_MS_DELAY);
 
         _evtimer_add(netif, GNRC_IPV6_NIB_SEARCH_RTR, &netif->ipv6.search_rtr,
@@ -166,15 +168,18 @@ void gnrc_ipv6_nib_init_iface(gnrc_netif_t *netif)
 static bool _on_link(const ipv6_addr_t *dst, unsigned *iface)
 {
     _nib_offl_entry_t *entry = NULL;
+    char addr_str[IPV6_ADDR_MAX_STR_LEN];
 
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN)
     if (*iface != 0) {
         if (gnrc_netif_is_6ln(gnrc_netif_get_by_pid(*iface))) {
+            DEBUG("****************, is link local? %d\n", ipv6_addr_is_link_local(dst));
             return ipv6_addr_is_link_local(dst);
         }
     }
 #endif  /* CONFIG_GNRC_IPV6_NIB_6LN */
     while ((entry = _nib_offl_iter(entry))) {
+        DEBUG("nib: Checking with off-link entry, ipv6_prefix: %s, mode: %d, valid_until: %ld. \n", ipv6_addr_to_str(addr_str, &entry->pfx, sizeof(addr_str)), entry->mode, entry->valid_until);
         if ((entry->mode & _PL) && (entry->flags & _PFX_ON_LINK) &&
             (ipv6_addr_match_prefix(dst, &entry->pfx) >= entry->pfx_len)) {
             *iface = _nib_onl_get_if(entry->next_hop);
@@ -200,6 +205,7 @@ int gnrc_ipv6_nib_get_next_hop_l2addr(const ipv6_addr_t *dst,
                                               (netif == NULL) ? 0 : netif->pid);
         /* consider neighbor cache entries first */
         unsigned iface = (node == NULL) ? 0 : _nib_onl_get_if(node);
+        DEBUG("nib: iface = %u, CONFIG_IPV6_NIB_6LN: %d\n", iface, IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN));
 
         if ((node != NULL) || _on_link(dst, &iface)) {
             DEBUG("nib: %s is on-link or in NC, start address resolution\n",
@@ -379,6 +385,7 @@ void gnrc_ipv6_nib_handle_timer_event(void *ctx, uint16_t type)
             break;
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LN)
         case GNRC_IPV6_NIB_REREG_ADDRESS:
+            DEBUG("nib: Re-registering in switch case for GNRC_IPV6_NIB_REREG_ADDRESS and CONFIG_GNRC_IPV6_NIB_6LN is active!!!!!!!!!n");
             _handle_rereg_address(ctx);
             break;
 #endif  /* CONFIG_GNRC_IPV6_NIB_6LN */
@@ -697,6 +704,7 @@ static void _handle_rtr_adv(gnrc_netif_t *netif, const ipv6_hdr_t *ipv6,
         for (int i = 0; i < CONFIG_GNRC_NETIF_IPV6_ADDRS_NUMOF; i++) {
             if ((netif->ipv6.addrs_flags[i] != 0) &&
                 (netif->ipv6.addrs_flags[i] != GNRC_NETIF_IPV6_ADDRS_FLAGS_STATE_VALID)) {
+                DEBUG("nib: Re-registering address in nib.c\n");
                 _handle_rereg_address(&netif->ipv6.addrs[i]);
             }
         }
@@ -1133,7 +1141,6 @@ static bool _resolve_addr(const ipv6_addr_t *dst, gnrc_netif_t *netif,
                           _nib_onl_entry_t *entry)
 {
     bool res = false;
-
     if ((netif != NULL) && (netif->device_type == NETDEV_TYPE_SLIP)) {
         /* XXX: Linux doesn't do neighbor discovery for SLIP so no use sending
          * NS and since SLIP doesn't have link-layer addresses anyway, we can
@@ -1145,6 +1152,7 @@ static bool _resolve_addr(const ipv6_addr_t *dst, gnrc_netif_t *netif,
     }
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM)
     if ((entry != NULL) && (entry->mode & _NC) && _is_reachable(entry)) {
+        DEBUG("nib : Inside if\n");
         if (_get_nud_state(entry) == GNRC_IPV6_NIB_NC_INFO_NUD_STATE_STALE) {
             _set_nud_state(netif, entry, GNRC_IPV6_NIB_NC_INFO_NUD_STATE_DELAY);
             _evtimer_add(entry, GNRC_IPV6_NIB_DELAY_TIMEOUT,
@@ -1166,6 +1174,7 @@ static bool _resolve_addr(const ipv6_addr_t *dst, gnrc_netif_t *netif,
     }
 #endif  /* CONFIG_GNRC_IPV6_NIB_ARSM */
     else if (!(res = _resolve_addr_from_ipv6(dst, netif, nce))) {
+        DEBUG("nib: Inside else if\n");
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM)
         bool reset = false;
 #endif  /* CONFIG_GNRC_IPV6_NIB_ARSM */
@@ -1175,7 +1184,10 @@ static bool _resolve_addr(const ipv6_addr_t *dst, gnrc_netif_t *netif,
         if ((entry == NULL) || !(entry->mode & _NC)) {
             entry = _nib_nc_add(dst, (netif != NULL) ? netif->pid : 0,
                                 GNRC_IPV6_NIB_NC_INFO_NUD_STATE_INCOMPLETE);
+            DEBUG("nib: On-link entry in _resolve_addr adter adding in cache: ");
+            DEBUG("nib: ipv6 addr: |%s|, l2addr: |%s|, mode: %d.\n", ipv6_addr_to_str(addr_str, &entry->ipv6, sizeof(addr_str)), gnrc_netif_addr_to_str(entry->l2addr, entry->l2addr_len, addr_str), entry->mode);
             if (entry == NULL) {
+                DEBUG("nib: entry is NULL\n");
                 gnrc_pktbuf_release(pkt);
                 return false;
             }
@@ -1217,6 +1229,7 @@ static bool _resolve_addr(const ipv6_addr_t *dst, gnrc_netif_t *netif,
                         LL_PREPEND(queue_entry->pkt, netif_hdr);
                     }
                     gnrc_pktqueue_add(&entry->pktqueue, queue_entry);
+                    DEBUG("nib: Packet added to queue in _resolve_addr\n");
                 }
                 else {
                     DEBUG("nib: can't allocate entry for packet queue "
@@ -1241,6 +1254,8 @@ static bool _resolve_addr(const ipv6_addr_t *dst, gnrc_netif_t *netif,
         _probe_nbr(entry, reset);
 #endif  /* CONFIG_GNRC_IPV6_NIB_ARSM */
     }
+    DEBUG("nib: Printing nce inside _resolve_addr()\n");
+    gnrc_ipv6_nib_nc_print(nce);
     return res;
 }
 

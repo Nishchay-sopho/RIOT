@@ -29,7 +29,7 @@
 #include "_nib-internal.h"
 #include "_nib-router.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
 
 /* pointers for default router selection */
@@ -95,7 +95,7 @@ _nib_onl_entry_t *_nib_onl_alloc(const ipv6_addr_t *addr, unsigned iface)
                                                      sizeof(addr_str)), iface);
     for (unsigned i = 0; i < CONFIG_GNRC_IPV6_NIB_NUMOF; i++) {
         _nib_onl_entry_t *tmp = &_nodes[i];
-
+        DEBUG("_nib-internal: on-link entry, l2addr\n");
         if ((_nib_onl_get_if(tmp) == iface) && _addr_equals(addr, tmp)) {
             /* exact match */
             DEBUG("  %p is an exact match\n", (void *)tmp);
@@ -218,11 +218,16 @@ _nib_onl_entry_t *_nib_onl_iter(const _nib_onl_entry_t *last)
 _nib_onl_entry_t *_nib_onl_get(const ipv6_addr_t *addr, unsigned iface)
 {
     assert(addr != NULL);
-    DEBUG("nib: Getting on-link node entry (addr = %s, iface = %u)\n",
+    DEBUG("_nib-internal: Getting on-link node entry (addr = %s, iface = %u)\n",
           ipv6_addr_to_str(addr_str, addr, sizeof(addr_str)), iface);
+    char addr_str[IPV6_ADDR_MAX_STR_LEN];
+    DEBUG("_nib-internal: NIB_NUMOF: %d, IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LR): %d,  IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM): %d.\n", CONFIG_GNRC_IPV6_NIB_NUMOF, IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LR),  IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM));
     for (unsigned i = 0; i < CONFIG_GNRC_IPV6_NIB_NUMOF; i++) {
         _nib_onl_entry_t *node = &_nodes[i];
-
+        DEBUG("nib_internal: Node ip address: |%s|", ipv6_addr_to_str(addr_str, &node->ipv6, sizeof(addr_str)));
+        DEBUG(", and l2addr: |%s|\n",
+        gnrc_netif_addr_to_str(node->l2addr, node->l2addr_len,
+                             addr_str));
         if ((node->mode != _EMPTY) &&
             /* either requested or current interface undefined or
              * interfaces equal */

@@ -133,20 +133,22 @@ void gnrc_ipv6_nib_nc_print(gnrc_ipv6_nib_nc_t *entry)
     char addr_str[(IPV6_ADDR_MAX_STR_LEN > CONFIG_GNRC_IPV6_NIB_L2ADDR_MAX_LEN) ?
                    IPV6_ADDR_MAX_STR_LEN : CONFIG_GNRC_IPV6_NIB_L2ADDR_MAX_LEN];
 
-    printf("%s ", ipv6_addr_to_str(addr_str, &entry->ipv6, sizeof(addr_str)));
+    printf("ipv6 addr: %s ", ipv6_addr_to_str(addr_str, &entry->ipv6, sizeof(addr_str)));
     if (gnrc_ipv6_nib_nc_get_iface(entry) != KERNEL_PID_UNDEF) {
         printf("dev #%u ", gnrc_ipv6_nib_nc_get_iface(entry));
     }
-    printf("lladdr %s ", gnrc_netif_addr_to_str(entry->l2addr,
+    printf("lladdr |%s| ", gnrc_netif_addr_to_str(entry->l2addr,
                                                 entry->l2addr_len,
                                                 addr_str));
     if (gnrc_ipv6_nib_nc_is_router(entry)) {
         printf("router");
     }
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM)
+    printf("IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM): %d\n", IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ARSM));
     printf(" %s", _nud_str[gnrc_ipv6_nib_nc_get_nud_state(entry)]);
 #endif
 #if CONFIG_GNRC_IPV6_NIB_6LR
+    printf("CONFIG_GNRC_IPV6_NIB_6LR: %d\n", CONFIG_GNRC_IPV6_NIB_6LR);
     printf(" %s",_ar_str[_AR_STR_IDX(gnrc_ipv6_nib_nc_get_ar_state(entry))]);
 #endif
     puts("");

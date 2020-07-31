@@ -39,8 +39,9 @@
 
 #include "net/gnrc/ipv6.h"
 
-#define ENABLE_DEBUG    (0)
+#define ENABLE_DEBUG    (1)
 #include "debug.h"
+#include "od.h"
 
 #define _MAX_L2_ADDR_LEN    (8U)
 
@@ -203,6 +204,8 @@ static void *_event_loop(void *args)
 
             case GNRC_NETAPI_MSG_TYPE_SND:
                 DEBUG("ipv6: GNRC_NETAPI_MSG_TYPE_SND received\n");
+                gnrc_pktsnip_t *tmp = gnrc_pktsnip_search_type(pkt, GNRC_NETTYPE_ICMPV6);
+                od_hex_dump(tmp->data, tmp->size, OD_WIDTH_DEFAULT);
                 _send(msg.content.ptr, true);
                 break;
 
@@ -830,6 +833,9 @@ static void _receive(gnrc_pktsnip_t *pkt)
     DEBUG("dst = %s, next header = %u, length = %" PRIu16 ")\n",
           ipv6_addr_to_str(addr_str, &(hdr->dst), sizeof(addr_str)),
           first_nh, byteorder_ntohs(hdr->len));
+
+    gnrc_pktsnip_t *payload_pkt = gnrc_pktsnip_search_type(pkt, GNRC_NETTYPE_UNDEF);
+    od_hex_dump(payload_pkt->data, payload_pkt->size, OD_WIDTH_DEFAULT);
 
     if ((pkt = gnrc_ipv6_ext_process_hopopt(pkt, &first_nh)) == NULL) {
         DEBUG("ipv6: packet's extension header was erroneous or packet was "

@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 
+#include "net/gnrc/ipv6/nib/nc.h"
 #include "net/gnrc.h"
 #include "net/gnrc/ipv6.h"
 #include "net/gnrc/netif.h"
@@ -101,6 +102,14 @@ static void send(char *addr_str, char *port_str, char *data, unsigned int num,
             puts("Error: unable to locate UDP thread");
             gnrc_pktbuf_release(ip);
             return;
+        }
+
+        void *state = NULL;
+        gnrc_ipv6_nib_nc_t nce;
+
+        puts("My neighbors:");
+        while (gnrc_ipv6_nib_nc_iter(0, &state, &nce)) {
+          gnrc_ipv6_nib_nc_print(&nce);
         }
         /* access to `payload` was implicitly given up with the send operation above
          * => use temporary variable for output */
